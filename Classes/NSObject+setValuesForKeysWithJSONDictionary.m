@@ -14,7 +14,29 @@
 - (void)setValuesForKeysWithJSONDictionary:(NSDictionary *)keyedValues dateFormatter:(NSDateFormatter *)dateFormatter
 {
 	unsigned int propertyCount;
-	objc_property_t *properties = class_copyPropertyList([self class], &propertyCount);
+    objc_property_t *properties = NULL;
+    
+    unsigned int selfPropertyCount;
+	objc_property_t *selfProperties = class_copyPropertyList([self class], &selfPropertyCount);
+    objc_property_t *superProperties = NULL;
+    
+    Class superClass = class_getSuperclass([self class]);
+    if (superClass != [NSObject class]) {
+        unsigned int superPropertyCount;
+        superProperties = class_copyPropertyList(superClass, &superPropertyCount);
+        
+        properties = malloc((selfPropertyCount+superPropertyCount)*sizeof(objc_property_t));
+        if (properties != NULL) {
+            memcpy(properties, selfProperties, selfPropertyCount*sizeof(objc_property_t));
+            memcpy(properties+selfPropertyCount, superProperties, superPropertyCount*sizeof(objc_property_t));
+        }
+        
+        propertyCount = selfPropertyCount+superPropertyCount;
+    }
+    else {
+        properties = selfProperties;
+        propertyCount = selfPropertyCount;
+    }
 	
 	/*
 	 This code iterates over self's properties instead of ivars because the backing ivar might have a different name
@@ -46,7 +68,7 @@
 					if (strlen(typeEncoding) >= 3) {
 						char *className = strndup(typeEncoding+2, strlen(typeEncoding)-3);
 						class = NSClassFromString([NSString stringWithUTF8String:className]);
-            free(className);
+                        free(className);
 					}
 					// Check for type mismatch, attempt to compensate
 					if ([class isSubclassOfClass:[NSString class]] && [value isKindOfClass:[NSNumber class]]) {
@@ -60,6 +82,62 @@
 					} else if ([class isSubclassOfClass:[NSDate class]] && [value isKindOfClass:[NSString class]] && (dateFormatter != nil)) {
 						value = [dateFormatter dateFromString:value];
 					}
+                    
+                    
+                    /*****************************shuiyouren add*****************************/
+                    else if ([class isSubclassOfClass:[NSString class]] && [value isKindOfClass:[NSArray class]] && value != nil && [value count] == 0) {
+                        value = @"";
+                    }
+                    
+                    else if ([class isSubclassOfClass:[NSArray class]] && value) {
+                        if ([value count] == 0) {
+                            value = nil;
+                        }
+                        if ([self respondsToSelector:@selector(dicForArraykeyAndClass)]) {
+                            NSDictionary *tmpDic = [self performSelector:@selector(dicForArraykeyAndClass)];
+                            NSString *newClassName = [tmpDic objectForKey:keyName];
+                            Class newClass = NSClassFromString(newClassName);
+                            if (newClass) {
+                                int aArrCount = [value count];
+                                NSMutableArray *tmpArr = [NSMutableArray arrayWithCapacity:aArrCount];
+                                for (id aItem in value) {
+                                    if ([aItem isKindOfClass:[NSDictionary class]]) {
+                                        id aNewItem = [[newClass alloc] init];
+                                        
+                                        [aNewItem setValuesForKeysWithJSONDictionary:aItem dateFormatter:nil];
+                                        
+                                        [tmpArr addObject:aNewItem];
+                                        [aNewItem release];
+                                    }
+                                    else {
+                                        [NSException raise:@"Json parse error" format:@"the value %@ is not a dic", aItem];
+                                    }
+                                }
+                                
+                                value = tmpArr;
+                            }
+                            else {
+                                [NSException raise:@"Json set parse dic error" format:@"not exist the class: %@", newClassName];
+                            }
+                        }
+                        else {
+                            [NSException raise:@"Json parse error" format:@"can not parse the array for key: %@,please implement function: -(NSDictionary *)dicForArraykeyAndClass", keyName];
+                        }
+                    }
+                    
+                    //custom class
+                    else if (![class isSubclassOfClass:[NSString class]] && ![class isSubclassOfClass:[NSNumber class]] && ![class isSubclassOfClass:[NSDate class]]) {
+                        id tmpItem = [[[class alloc] init] autorelease];
+                        if (![value isKindOfClass:[NSDictionary class]]) {
+                            [NSException raise:@"Json parse error" format:@"the value for key %@ is not a dic, value class: %@", keyName, NSStringFromClass([value class])];
+                        }
+                        [tmpItem setValuesForKeysWithJSONDictionary:value dateFormatter:nil];
+                        
+                        value = tmpItem;
+                    }
+                    
+                    /************************************************************************/
+                    
 					
 					break;
 				}
@@ -105,6 +183,8 @@
 		}
 	}
 	free(properties);
+    free(selfProperties);
+    free(superProperties);
 }
 
 @end
